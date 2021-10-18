@@ -16,8 +16,8 @@ from scipy.io import savemat
 import os
 
 # allow growth
-config = tf.ConfigProto()
-config.gpu_options.allow_growth = True
+#config = tf.ConfigProto()
+#config.gpu_options.allow_growth = True
 
 
 batch_size = 32
