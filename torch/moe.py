@@ -13,6 +13,9 @@ import torch.nn as nn
 from torch.distributions.normal import Normal
 from mlp import MLP
 import numpy as np
+
+from lenet import LeNet
+
 """
 
 import oneflow
@@ -148,6 +151,9 @@ class MoE(nn.Module):
         self.k = k
         # instantiate experts
         self.experts = nn.ModuleList([MLP(self.input_size, self.output_size, self.hidden_size) for i in range(self.num_experts)])
+ 
+ #       self.experts = nn.ModuleList([LeNet() for i in range(self.num_experts)])            
+
         self.w_gate = nn.Parameter(torch.zeros(input_size, num_experts), requires_grad=True)
         self.w_noise = nn.Parameter(torch.zeros(input_size, num_experts), requires_grad=True)
 
@@ -278,7 +284,9 @@ class MoE(nn.Module):
 
         dispatcher = SparseDispatcher(self.num_experts, gates)
         expert_inputs = dispatcher.dispatch(x)
+        
         gates = dispatcher.expert_to_gates()
         expert_outputs = [self.experts[i](expert_inputs[i]) for i in range(self.num_experts)]
+
         y = dispatcher.combine(expert_outputs)
         return y, loss
