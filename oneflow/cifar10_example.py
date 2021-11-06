@@ -1,38 +1,39 @@
 # This file is based on the `https://pytorch.org/tutorials/beginner/blitz/cifar10_tutorial.html`.
 
-import torch
-import torchvision
-import torchvision.transforms as transforms
-
-import torch.nn as nn
-import torch.nn.functional as F
+import oneflow as torch
+import oneflow as flow
+import oneflow.nn as nn
+import oneflow.nn.functional as F
 from moe import MoE
-import torch.optim as optim
+import oneflow.optim as optim
 
-transform = transforms.Compose(
-    [transforms.ToTensor(),
-     transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
+import flowvision as vision
 
-trainset = torchvision.datasets.CIFAR10(root='./data', train=True,
+transform = vision.transforms.Compose(
+    [vision.transforms.ToTensor(),
+     vision.transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
+
+trainset = vision.datasets.CIFAR10(root='./data', train=True,
                                         download=True, transform=transform)
-trainloader = torch.utils.data.DataLoader(trainset, batch_size=64,
-                                          shuffle=True, num_workers=2)
+trainloader = flow.utils.data.DataLoader(trainset, batch_size=64,
+                                          shuffle=True, num_workers=1)
 
-testset = torchvision.datasets.CIFAR10(root='./data', train=False,
+testset = vision.datasets.CIFAR10(root='./data', train=False,
                                        download=True, transform=transform)
-testloader = torch.utils.data.DataLoader(testset, batch_size=64,
-                                         shuffle=False, num_workers=2)
+testloader = flow.utils.data.DataLoader(testset, batch_size=64,
+                                         shuffle=False, num_workers=1)
 
 classes = ('plane', 'car', 'bird', 'cat',
            'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
 
 
-device = torch.device('cpu')
+device = flow.device('cpu')
 net = MoE(input_size=3072,output_size= 10, num_experts=10, hidden_size=256, noisy_gating=True, k=4)
-net = net.to(device)
+net.to(device)
 
-criterion = nn.CrossEntropyLoss()
+
 optimizer = optim.SGD(net.parameters(), lr=0.001, momentum=0.9)
+criterion = nn.CrossEntropyLoss()
 criterion.to(device)
 
 for epoch in range(10):  # loop over the dataset multiple times
