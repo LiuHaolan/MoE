@@ -7,15 +7,31 @@
 # The code is based on the TensorFlow implementation:
 # https://github.com/tensorflow/tensor2tensor/blob/master/tensor2tensor/utils/expert_utils.py
 
-
-import math
-import oneflow
-import oneflow as flow
-import oneflow.nn as nn
-
+"""
+import torch
+import torch.nn as nn
+from torch.distributions.normal import Normal
 from mlp import MLP
 import numpy as np
 
+from lenet import LeNet
+
+"""
+import oneflow 
+import oneflow as flow
+import oneflow as torch
+import oneflow.nn as nn
+
+#import oneflow.compatible.single_client as cflow
+
+#def aindex_add(x, dim, index, tensor, alpha=1):
+#    pass
+
+#from oneflow.normal import Normal
+#from torch.distributions.normal import Normal
+
+from mlp import MLP
+import numpy as np
 
 class SparseDispatcher(object):
     """Helper for implementing a mixture of experts.
@@ -27,7 +43,7 @@ class SparseDispatcher(object):
     combine - take output Tensors from each expert and form a combined output
       Tensor.  Outputs from different experts for the same batch element are
       summed together, weighted by the provided "gates".
-
+    
     The class is initialized with a "gates" Tensor, which specifies which
     batch elements go to which experts, and the weights to use when combining
     the outputs.  Batch element b is sent to expert e iff gates[b, e] != 0.
@@ -49,18 +65,22 @@ class SparseDispatcher(object):
     `Tensor`s for expert i only the batch elements for which `gates[b, i] > 0`.
     """
 
+
     def __init__(self, num_experts, gates):
         """Create a SparseDispatcher."""
 
         self._gates = gates
         self._num_experts = num_experts
         # sort experts
-        sorted_experts, index_sorted_experts = flow.nonzero(gates).sort(0)
+        sorted_experts, index_sorted_experts = torch.nonzero(gates).sort(0)
+
+#        print(gates)  
+#        print(sorted_experts)
 
         # drop indices
         _, self._expert_index = sorted_experts.split(1, dim=1)
         # get according batch index for each expert
-        self._batch_index = sorted_experts[index_sorted_experts[:, 1], 0]
+        self._batch_index = sorted_experts[index_sorted_experts[:, 1],0]
 
         # calculate num samples that each expert gets
         self._part_sizes = list((gates > 0).sum(0).numpy())
@@ -85,10 +105,12 @@ class SparseDispatcher(object):
         """
 
         # assigns samples to experts whose gate is nonzero
+
         # expand according to batch index so we can just split by _part_sizes
         inp_exp = inp[self._batch_index].squeeze(1)
-        return flow.split(inp_exp, self._part_sizes, dim=0)
+        return torch.split(inp_exp, self._part_sizes, dim=0)
 
+    
     def combine(self, expert_out, multiply_by_gates=True):
         """Sum together the expert output, weighted by the gates.
         The slice corresponding to a particular batch element `b` is computed
@@ -104,31 +126,65 @@ class SparseDispatcher(object):
         """
         # apply exp to expert outputs, so we are not longer in log space
 
-        stitched = flow.cat(expert_out, 0).exp()
-        stitched = stitched.to("cuda")      
+        stitched = torch.cat(expert_out, 0).exp()
 
         if multiply_by_gates:
             stitched = stitched.mul(self._nonzero_gates)
-        zeros = flow.zeros(self._gates.size(
-            0), expert_out[-1].size(1), requires_grad=True,device=stitched.device)
+        zeros = torch.zeros(self._gates.size(0), expert_out[-1].size(1), requires_grad=True)
 
-        # spanning a index matrix
-        batch_index = np.zeros([stitched.shape[0], stitched.shape[1]])
 
+        # combine samples that have been processed by the same k experts TODO
+#        combined = zeros.index_add(0, self._batch_index, stitched.float())
+#        fstitched = stitched.float()
+
+#        print(self._batch_index.shape)
+#        print(fstitched.shape)
+#        print(zeros.shape)
+        """
+        with oneflow.no_grad():
+            for i in range(fstitched.shape[0]):
+    #                print(self._batch_index[i].item())
+                combined[self._batch_index[i].item()] += fstitched[i,:]
+        """
+        # spanning a index matrix        
+        batch_index = np.zeros([stitched.shape[0],stitched.shape[1]])
+      
         for i in range(stitched.shape[0]):
-            batch_index[i, :] = np.ones(
-                batch_index.shape[1])*self._batch_index[i].item()
-        batch_index_ = flow.Tensor(batch_index,device=stitched.device)
+            batch_index[i,:] = np.ones(batch_index.shape[1])*self._batch_index[i].item()
+        batch_index_ = flow.Tensor(batch_index)
         batch_index_ = batch_index_.int()
         batch_index_.requires_grad = False
 
-        combined = flow.scatter_add(
-            zeros, dim=0, index=batch_index_, src=stitched.float())
-
+        combined = flow.scatter_add(zeros, dim=0, index=batch_index_, src=stitched.float())
+#        print(combined)
         # add eps to all zero values in order to avoid nans when going back to log space
         combined[combined == 0] = np.finfo(float).eps
-        # back to log space
+            # back to log space
         return combined.log()
+
+        """
+        zeros1 = zeros.clone()
+     
+        for i in range(fstitched.shape[0]):
+#                print(self._batch_index[i].item())
+            zeros1[self._batch_index[i].item()] = zeros[self._batch_index[i].item()] + fstitched[i,:]
+
+            # add eps to all zero values in order to avoid nans when going back to log space
+            zeros1[zeros == 0] = np.finfo(float).eps
+        # back to log space
+        return zeros1.log()
+        """
+    """
+    def combine(self, expert_out, multiply_by_gates=True):
+        print(len(expert_out))
+        print(expert_out[0].shape)
+        # initialized output
+        combined = torch.zeros(self._gates.size(0), expert_out[-1].size(1), requires_grad=True)
+        return combined
+#        for expert_i in range(len(expert_out)):
+    """      
+           
+
 
     def expert_to_gates(self):
         """Gate values corresponding to the examples in the per-expert `Tensor`s.
@@ -137,13 +193,12 @@ class SparseDispatcher(object):
               and shapes `[expert_batch_size_i]`
         """
         # split nonzero gates for each expert
-        return flow.split(self._nonzero_gates, self._part_sizes, dim=0)
+        return torch.split(self._nonzero_gates, self._part_sizes, dim=0)
 
-# should be aware of the placement
-def cdf(value, loc=flow.tensor([0.0]), scale=flow.tensor([1.0])):
-    loc = loc.to(value.device)
-    scale = scale.to(value.device)
-    return 0.5*(1+oneflow.erf((value-loc)*scale.reciprocal()/math.sqrt(2)))
+import math
+def cdf(value, loc=torch.tensor([0.0]), scale=torch.tensor([1.0])):
+   return 0.5*(1+oneflow.erf((value-loc)*scale.reciprocal()/math.sqrt(2)))
+
 
 
 class MoE(nn.Module):
@@ -168,13 +223,10 @@ class MoE(nn.Module):
         self.k = k
 
         # instantiate experts
-        self.experts = nn.ModuleList(
-            [MLP(self.input_size, self.output_size, self.hidden_size) for i in range(self.num_experts)])
-
-        self.w_gate = nn.Parameter(flow.zeros(
-            input_size, num_experts), requires_grad=True)
-        self.w_noise = nn.Parameter(flow.zeros(
-            input_size, num_experts), requires_grad=True)
+        self.experts = nn.ModuleList([MLP(self.input_size, self.output_size, self.hidden_size) for i in range(self.num_experts)])
+ 
+        self.w_gate = nn.Parameter(torch.zeros(input_size, num_experts), requires_grad=True)
+        self.w_noise = nn.Parameter(torch.zeros(input_size, num_experts), requires_grad=True)
 
         self.softplus = nn.Softplus()
         self.softmax = nn.Softmax(1)
@@ -194,8 +246,9 @@ class MoE(nn.Module):
         eps = 1e-10
         # if only num_experts = 1
         if x.shape[0] == 1:
-            return flow.Tensor([0])
+            return torch.Tensor([0])
         return x.float().var() / (x.float().mean()**2 + eps)
+
 
     def _gates_to_load(self, gates):
         """Compute the true load per expert, given the gates.
@@ -206,6 +259,9 @@ class MoE(nn.Module):
         a float32 `Tensor` of shape [n]
         """
         return (gates > 0).sum(0)
+
+
+
 
     def _prob_in_top_k(self, clean_values, noisy_values, noise_stddev, noisy_top_values):
         """Helper function to NoisyTopKGating.
@@ -228,24 +284,19 @@ class MoE(nn.Module):
         batch = clean_values.size(0)
         m = noisy_top_values.size(1)
         top_values_flat = noisy_top_values.flatten()
-
-        threshold_positions_if_in = flow.arange(batch, device=noisy_values.device) * m + self.k
-
-        threshold_if_in = flow.unsqueeze(flow.gather(
-            top_values_flat, 0, threshold_positions_if_in), 1)
-        is_in = flow.gt(noisy_values, threshold_if_in)
-
-
+        # TODO
+        threshold_positions_if_in = torch.arange(batch, device="cuda") * m + self.k
+        threshold_if_in = torch.unsqueeze(torch.gather(top_values_flat, 0, threshold_positions_if_in), 1)
+        is_in = torch.gt(noisy_values, threshold_if_in)
         threshold_positions_if_out = threshold_positions_if_in - 1
-        threshold_if_out = flow.unsqueeze(flow.gather(
-            top_values_flat, 0, threshold_positions_if_out), 1)
-
+        threshold_if_out = torch.unsqueeze(torch.gather(top_values_flat,0 , threshold_positions_if_out), 1)
         # is each value currently in the top k.
         prob_if_in = cdf((clean_values - threshold_if_in)/noise_stddev)
         prob_if_out = cdf((clean_values - threshold_if_out)/noise_stddev)
-
-        prob = flow.where(is_in, prob_if_in, prob_if_out)
+        
+        prob = torch.where(is_in, prob_if_in, prob_if_out)
         return prob
+
 
     def noisy_top_k_gating(self, x, train, noise_epsilon=1e-2):
         """Noisy top-k gating.
@@ -258,46 +309,44 @@ class MoE(nn.Module):
             gates: a Tensor with shape [batch_size, num_experts]
             load: a Tensor with shape [num_experts]
         """
-
+        
         clean_logits = oneflow.matmul(x, self.w_gate)
+        
 
         if self.noisy_gating:
             raw_noise_stddev = oneflow.matmul(x, self.w_noise)
-            noise_stddev = (
-                (self.softplus(raw_noise_stddev) + noise_epsilon) * train)
-#            noisy_logits = clean_logits + ( torch.randn(clean_logits.size()) * noise_stddev)
-            # TODO, fix this after torch randn argument fixed
-            noisy_logits = clean_logits + \
-                (flow.randn(clean_logits.size()[
-                 0], clean_logits.size()[1], device=clean_logits.device) * noise_stddev)
-
+            noise_stddev = ((self.softplus(raw_noise_stddev) + noise_epsilon) * train)
+            noisy_logits = clean_logits + ( torch.randn(clean_logits.size()[0],clean_logits.size()[1]) * noise_stddev)
+       
             logits = noisy_logits
         else:
             logits = clean_logits
-
-
+        # manually, TODO
+        logits = logits.to("cuda")
+     
         # calculate topk + 1 that will be needed for the noisy gates
-        top_logits, top_indices = logits.topk(
-            min(self.k + 1, self.num_experts), dim=1)
+        top_logits, top_indices = logits.topk(min(self.k + 1, self.num_experts), dim=1)        
+
         top_k_logits = top_logits[:, :self.k]
         top_k_indices = top_indices[:, :self.k]
         top_k_gates = self.softmax(top_k_logits)
 
-        top_k_logits = top_k_logits.to(logits.device)
-        top_indices = top_indices.to(logits.device)
-        top_logits = top_logits.to(logits.device)
+        zeros = torch.zeros(logits.shape, dtype=logits.dtype,requires_grad=True)
 
-        zeros = flow.zeros(
-            logits.shape, dtype=logits.dtype, requires_grad=True,device=logits.device)
+         # manually TODO
+        top_k_logits = top_k_logits.to("cuda")
+        top_indices = top_indices.to("cuda")
+        zeros = zeros.to("cuda")
+        top_logits = top_logits.to("cuda")
         gates = oneflow.scatter(zeros, 1, top_k_indices, top_k_gates)
 
-
         if self.noisy_gating and self.k < self.num_experts:
-            load = (self._prob_in_top_k(clean_logits,
-                    noisy_logits, noise_stddev, top_logits)).sum(0)
+            load = (self._prob_in_top_k(clean_logits, noisy_logits, noise_stddev, top_logits)).sum(0)
         else:
             load = self._gates_to_load(gates)
         return gates, load
+
+
 
     def forward(self, x, train=True, loss_coef=1e-2):
         """Args:
@@ -322,14 +371,14 @@ class MoE(nn.Module):
         dispatcher = SparseDispatcher(self.num_experts, gates)
         expert_inputs = dispatcher.dispatch(x)
         gates = dispatcher.expert_to_gates()
-
+  
         expert_outputs = []
-        # TODO, vectorize this part after fixing the zero dimension bug
-        for i in range(self.num_experts):
+        # TODO, vectorize it later after oneflow solves the zero dimension bug
+        for i in range(self.num_experts):      
             if expert_inputs[i].shape.numel() != 0:
                 expert_outputs.append(self.experts[i](expert_inputs[i]))
             else:
-                expert_outputs.append(flow.zeros(0, self.output_size))
+                expert_outputs.append(flow.zeros(0,self.output_size))
 #        expert_outputs = [self.experts[i](expert_inputs[i]) for i in range(self.num_experts)]
         y = dispatcher.combine(expert_outputs)
         return y, loss
